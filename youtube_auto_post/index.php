@@ -8,6 +8,9 @@ Author:      Pham Quoc Thang
 Author URI:  http://phamthang.info
 */
 set_time_limit(0);
+require_once(ABSPATH . 'wp-admin/includes/file.php');
+require_once(ABSPATH . 'wp-admin/includes/media.php');
+
 $list_channel = array("https://www.youtube.com/channel/UCLa90xY6l4sEY1sC3tlwGGA", 
 	"", 
 	"");
@@ -15,7 +18,7 @@ define("YOUTUBE_API_KEY", "AIzaSyBJDDqThaPUNfEORDJtmZY6DEC-0l_zZLI");
 define("AUTHOR_ID", 1);
 $category = array();
 $daily = false;
-
+$limit = 0;
 $totalPosted = 0;
 function add_my_custom_menu() {
     add_menu_page (
@@ -60,11 +63,13 @@ function do_this_hourly() {
 }
 
 function my_admin_page_function() {
+	global $totalPosted;
     ?>
     <div class="wrap">
         <h2>[YAP] Youtube Auto Post</h2>
         <form method="post">
         	<input type="text" name="channel" placeholder="Youtube Channel Link" size="100px" />
+        	 | Limit: <input type="text" name="limit" placeholder="50" value="50" />
         	<br />
         	<input class="button" type="submit" value="Post Videos" />
         </form>
@@ -73,13 +78,14 @@ function my_admin_page_function() {
     if(isset($_POST['channel']))
     {
     	$youtube = new YoutubeGetVideo;
+    	$youtube->limit = intval($_POST['limit']);
 
     	$channelId = $youtube->getChannelId($_POST['channel']);
 
     	if($channelId != 'fail')
     	{
     		$youtube->getAllVideosId($channelId);
-    		echo "<hr> Done!";
+    		echo "<hr> Done! Posted " . $totalPosted . " videos";
     	}
     	else
     	{
@@ -96,7 +102,7 @@ function inStr($s,$as)
     }
 class YoutubeGetVideo
 {
-	
+	public $limit;
 	function getChannelId($link)
 	{
 		$page = @file_get_contents($_POST['channel']);
@@ -134,6 +140,36 @@ class YoutubeGetVideo
 	}
 	function add_new_post_wp($data)
 	{
+		global $wp_query, $totalPosted, $limit;
+		$item = current($data['items'])['snippet'];
+
+		if($totalPosted < $this->limit)
+		{
+			$post = array(
+			  'post_content'   => '<iframe width="560" height="315" src="https://www.youtube.com/embed/'.current($data['items'])['id'].'" frameborder="0" allowfullscreen></iframe>',
+			  'post_title'     => $item['title'],
+			  'post_status'    => 'publish',
+			  'post_type'      => 'post',
+			  'post_author'    => AUTHOR_ID,
+			  'post_category'  => $category,
+			  'tags_input'     => @implode(",", $item['tags']),
+			);  
+			query_posts('meta_key=yap_id&meta_value=' . current($data['items'])['id']);
+			if(!$wp_query->found_posts)
+			{
+				wp_reset_query();
+				$id = wp_insert_post($post, $wp_error);
+				$this->Generate_Featured_Image($id, $item);
+				
+				add_post_meta($id, 'yap_id', current($data['items'])['id'], true);
+				echo "Posted => ".$item['title']."<br />";
+				$totalPosted++;
+			}
+		}
+		
+	}
+	function add_new_post_daily($data)
+	{
 		global $wp_query;
 		$item = current($data['items'])['snippet'];
 		
@@ -150,21 +186,29 @@ class YoutubeGetVideo
 		if(!$wp_query->found_posts)
 		{
 			wp_reset_query();
-			$id = wp_insert_post($post, $wp_error);
-			/*if(isset($item['thumbnails']['maxres']['url']))
+			if(inStr(" ".$item['publishedAt']." ", date("20y-m-d")))
+			{
+				$id = wp_insert_post($post, $wp_error);
+				$this->Generate_Featured_Image($id, $item);
+				add_post_meta($id, 'yap_id', current($data['items'])['id'], true);
+			}
+			
+			/*if(isset(var)et($item['thumbnails']['maxres']['url']))
 				$this->Generate_Featured_Image($item['thumbnails']['maxres']['url'],$id);
 			else
 				$this->Generate_Featured_Image($item['thumbnails']['high']['url'],$id);
 			*/
-		if(isset($item['thumbnails']['maxres']['url']))
+			
+			//echo "Posted => ".$item['title']."<br />";
+
+		}
+	}
+	function Generate_Featured_Image( $id, $item  ){
+	    if(isset($item['thumbnails']['maxres']['url']))
 				$thumb_url = $item['thumbnails']['maxres']['url'];
 			else
 				$thumb_url = $item['thumbnails']['high']['url'];
 		 //'http://img.youtube.com/vi/'. $youtubeid .'/0.jpg';
-
-        require_once(ABSPATH . 'wp-admin/includes/file.php');
-        require_once(ABSPATH . 'wp-admin/includes/media.php');
-        
 
         if ( ! empty($thumb_url) ) {
             // Download file to temp location
@@ -192,68 +236,10 @@ class YoutubeGetVideo
         }
 
         set_post_thumbnail( $id, $thumbid );
-			add_post_meta($id, 'yap_id', current($data['items'])['id'], true);
-			echo "Posted => ".$item['title']."<br />";
-
-		}
-	}
-	function add_new_post_daily($data)
-	{
-		global $wp_query;
-		$item = current($data['items'])['snippet'];
-		
-		$post = array(
-		  'post_content'   => '<iframe width="560" height="315" src="https://www.youtube.com/embed/'.current($data['items'])['id'].'" frameborder="0" allowfullscreen></iframe>',
-		  'post_title'     => $item['title'],
-		  'post_status'    => 'publish',
-		  'post_type'      => 'post',
-		  'post_author'    => AUTHOR_ID,
-		  'post_category'  => $category,
-		  'tags_input'     => @implode(",", $item['tags']),
-		);  
-		query_posts('meta_key=yap_id&meta_value=' . current($data['items'])['id']);
-		if(!$wp_query->found_posts)
-		{
-			wp_reset_query();
-			if(inStr(" ".$item['publishedAt']." ", date("20y-m-d")))
-			{
-				$id = wp_insert_post($post, $wp_error);
-				add_post_meta($id, 'yap_id', current($data['items'])['id'], true);
-			}
-			
-			/*if(isset(var)et($item['thumbnails']['maxres']['url']))
-				$this->Generate_Featured_Image($item['thumbnails']['maxres']['url'],$id);
-			else
-				$this->Generate_Featured_Image($item['thumbnails']['high']['url'],$id);
-			*/
-			
-			//echo "Posted => ".$item['title']."<br />";
-
-		}
-	}
-	function Generate_Featured_Image( $image_url, $post_id  ){
-	    $upload_dir = wp_upload_dir();
-	    $image_data = file_get_contents($image_url);
-	    $filename = basename($image_url);
-	    if(wp_mkdir_p($upload_dir['path']))     $file = $upload_dir['path'] . '/' . $filename;
-	    else                                    $file = $upload_dir['basedir'] . '/' . $filename;
-	    file_put_contents($file, $image_data);
-
-	    $wp_filetype = wp_check_filetype($filename, null );
-	    $attachment = array(
-	        'post_mime_type' => $wp_filetype['type'],
-	        'post_title' => sanitize_file_name($filename),
-	        'post_content' => '',
-	        'post_status' => 'inherit'
-	    );
-	    $attach_id = wp_insert_attachment( $attachment, $file, $post_id );
-	    require_once(ABSPATH . 'wp-admin/includes/image.php');
-	    $attach_data = wp_generate_attachment_metadata( $attach_id, $file );
-	    $res1= wp_update_attachment_metadata( $attach_id, $attach_data );
-	    $res2= set_post_thumbnail( $post_id, $attach_id );
 	}
 	function getAllVideoData($json)
 	{
+		
 		$videos = $this->getVideoId($json);
 		foreach ($videos as $video) {
 			if($video != null && $video != "")
